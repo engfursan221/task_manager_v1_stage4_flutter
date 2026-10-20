@@ -36,8 +36,18 @@ class HomeScreen extends StatelessWidget {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('مدير المهام'),
+          title: const Text('المهام العادية'),
           actions: [
+            // Switch to University Tasks Mode
+            TextButton.icon(
+              onPressed: () => Navigator.pushReplacementNamed(context, '/university'),
+              icon: const Icon(Icons.school_rounded, size: 18),
+              label: const Text('المهام الجامعية'),
+              style: TextButton.styleFrom(
+                foregroundColor: colorScheme.primary,
+                textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+            ),
             // Theme toggle action
             BlocBuilder<ThemeCubit, ThemeState>(
               builder: (context, themeState) {
@@ -255,7 +265,7 @@ class HomeScreen extends StatelessWidget {
                                         crossAxisAlignment: CrossAxisAlignment.start,
                                         children: [
                                           Text(
-                                            'إدارة المهام (CRUD)',
+                                            'إدارة المهام',
                                             style: theme.textTheme.titleMedium?.copyWith(
                                               fontWeight: FontWeight.bold,
                                               color: colorScheme.onSurface,
@@ -315,7 +325,7 @@ class HomeScreen extends StatelessWidget {
                                         crossAxisAlignment: CrossAxisAlignment.start,
                                         children: [
                                           Text(
-                                            'أرشيف المهام المحذوفة',
+                                            'أرشيف المهام',
                                             style: theme.textTheme.titleMedium?.copyWith(
                                               fontWeight: FontWeight.bold,
                                               color: colorScheme.onSurface,
@@ -346,48 +356,7 @@ class HomeScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 20),
 
-                    // Deliverables & System Status Card
-                    Card(
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        side: BorderSide(
-                          color: colorScheme.outline.withOpacity(0.2),
-                        ),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(18),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.check_circle_outline_rounded,
-                                  color: colorScheme.primary,
-                                  size: 20,
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'الميزات المكتملة في التطبيق',
-                                  style: theme.textTheme.titleSmall?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                    color: colorScheme.onSurface,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            _buildCheckRow(context, 'إضافة المهام: إنشاء مهمة جديدة بالعنوان والوصف'),
-                            _buildCheckRow(context, 'عرض المهام: استعراض المهام عبر بطاقات TaskCard'),
-                            _buildCheckRow(context, 'تعديل المهام: تعديل البيانات وتبديل حالة الإكمال'),
-                            _buildCheckRow(context, 'الحذف والأرشفة: حفظ المهام المحذوفة في الأرشيف بأمان'),
-                            _buildCheckRow(context, 'إدارة الحالة: تفاعل سلس وتحديث فوري عبر TasksCubit'),
-                            _buildCheckRow(context, 'دعم العربية والـ RTL: واجهة عربية متكاملة وشريط تنقل موحد'),
-                          ],
-                        ),
-                      ),
-                    ),
+
                     const SizedBox(height: 20),
 
                     // Logout Action Button

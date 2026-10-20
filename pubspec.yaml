@@ -66,9 +66,14 @@ flutter:
   # REQUIREMENT: CUSTOM FONTS
   # Prepared path for custom typography to be added.
   # ============================================================
-  # fonts:
-  #   - family: AppCustomFont
-  #     fonts:
-  #       - asset: assets/fonts/AppFont-Regular.ttf
-  #       - asset: assets/fonts/AppFont-Bold.ttf
-  #         weight: 700
+  fonts:
+    - family: Tajawal
+      fonts:
+        - asset: assets/fonts/Tajawal-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Tajawal-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Tajawal-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/Tajawal-ExtraBold.ttf
+          weight: 800

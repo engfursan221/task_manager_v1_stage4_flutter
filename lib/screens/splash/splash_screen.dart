@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../core/storage/university_storage_service.dart';
 import '../../cubit/auth/auth_cubit.dart';
 import '../../cubit/auth/auth_state.dart';
 
@@ -36,8 +37,13 @@ class _SplashScreenState extends State<SplashScreen> {
     return BlocListener<AuthCubit, AuthState>(
       listener: (context, state) {
         if (state is Authenticated) {
-          // If already logged in -> Navigate directly to Home
-          Navigator.pushReplacementNamed(context, '/home');
+          // If already logged in -> Navigate based on saved mode or mode selection
+          final activeMode = UniversityStorageService.instance.getActiveMode();
+          if (activeMode == 'university') {
+            Navigator.pushReplacementNamed(context, '/university');
+          } else {
+            Navigator.pushReplacementNamed(context, '/home');
+          }
         } else if (state is Unauthenticated || state is AuthError) {
           // If not logged in -> Navigate to Login
           Navigator.pushReplacementNamed(context, '/login');

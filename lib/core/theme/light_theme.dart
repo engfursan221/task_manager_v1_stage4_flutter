@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 // ============================================================
 
 final ThemeData lightTheme = ThemeData(
+  fontFamily: 'Tajawal',
   useMaterial3: true,
   brightness: Brightness.light,
   colorScheme: const ColorScheme(
@@ -36,6 +37,7 @@ final ThemeData lightTheme = ThemeData(
     elevation: 0,
     centerTitle: false,
     titleTextStyle: TextStyle(
+      fontFamily: 'Tajawal',
       fontSize: 20,
       fontWeight: FontWeight.bold,
       color: Color(0xFF0F172A),

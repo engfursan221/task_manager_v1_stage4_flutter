@@ -195,7 +195,57 @@ class SettingsScreen extends StatelessWidget {
               ),
               const SizedBox(height: 24),
 
-              // Section 3: App Information
+              // Section 3: Task System Mode (V2)
+              Text(
+                'نظام إدارة المهام النشط',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.primary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Card(
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  side: BorderSide(color: colorScheme.outline.withOpacity(0.2)),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    children: [
+                      ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: colorScheme.primaryContainer,
+                          child: Icon(Icons.swap_horiz_rounded, color: colorScheme.primary),
+                        ),
+                        title: const Text('تبديل نظام المهام'),
+                        subtitle: const Text('الانتقال بين المهام العادية والمهام الجامعية'),
+                        trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
+                        onTap: () {
+                          Navigator.pushNamed(context, '/mode-selection');
+                        },
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: const Color(0xFF059669).withOpacity(0.15),
+                          child: const Icon(Icons.account_balance_rounded, color: Color(0xFF059669)),
+                        ),
+                        title: const Text('المهام الجامعية'),
+                        subtitle: const Text('المقررات، المحاضرات، الحضور، وتصنيف المهام'),
+                        trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
+                        onTap: () {
+                          Navigator.pushReplacementNamed(context, '/university');
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // Section 4: App Information
               Text(
                 'عن التطبيق',
                 style: theme.textTheme.titleSmall?.copyWith(
@@ -217,29 +267,29 @@ class SettingsScreen extends StatelessWidget {
                       _buildInfoTile(
                         context,
                         icon: Icons.info_outline_rounded,
-                        title: 'اسم التطبيق',
-                        value: 'مدير المهام (Task Manager)',
+                        title: 'اسم التطبيق ',
+                        value: 'مدير المهام الجامعية (Task Manager )',
                       ),
                       const Divider(height: 1),
                       _buildInfoTile(
                         context,
                         icon: Icons.tag_rounded,
                         title: 'الإصدار',
-                        value: '1.0.0 (النسخة العربية)',
+                        value: 'v : 2.0.0',
                       ),
                       const Divider(height: 1),
                       _buildInfoTile(
                         context,
                         icon: Icons.flutter_dash_rounded,
                         title: 'بيئة العمل',
-                        value: 'Flutter & Cubit State Management',
+                        value: 'Flutter & GitHub',
                       ),
                       const Divider(height: 1),
                       _buildInfoTile(
                         context,
                         icon: Icons.format_textdirection_r_to_l_rounded,
-                        title: 'دعم اللغة',
-                        value: 'اللغة العربية بالكامل (RTL)',
+                        title: 'اللغة الاساسية',
+                        value: 'اللغة العربية ',
                       ),
                     ],
                   ),

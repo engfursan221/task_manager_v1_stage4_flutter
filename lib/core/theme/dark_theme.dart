@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 // ============================================================
 
 final ThemeData darkTheme = ThemeData(
+  fontFamily: 'Tajawal',
   useMaterial3: true,
   brightness: Brightness.dark,
   colorScheme: const ColorScheme(
@@ -59,6 +60,7 @@ final ThemeData darkTheme = ThemeData(
         borderRadius: BorderRadius.circular(12),
       ),
       textStyle: const TextStyle(
+        fontFamily: 'Tajawal',
         fontSize: 15,
         fontWeight: FontWeight.w600,
       ),
