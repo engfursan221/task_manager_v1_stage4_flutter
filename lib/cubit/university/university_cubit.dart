@@ -1,16 +1,23 @@
 // ============================================================
 // UNIVERSITY CUBIT (V2)
 // State management for University Tasks:
-// - Courses, Lectures, Attendance, Notes, Tasks
-// - Local persistence using UniversityStorageService (SharedPreferences)
-// - Compliant with Flutter Bloc Architecture
+// - Study Plans CRUD & Archiving
+// - Active Plan Synchronized Metrics
+// - Configurable Academic Tasks & Custom Task Types
+// - "Complete All Tasks" Atomic Action
+// - "Cancelled" Lecture Status with Reason Handling
+// - Theoretical & Practical Separation
+// - Course Academic Assessments & 100-Point Grading Validation
 // ============================================================
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/storage/university_storage_service.dart';
+import '../../models/assessment_model.dart';
 import '../../models/course_model.dart';
 import '../../models/lecture_model.dart';
+import '../../models/study_plan_model.dart';
+import '../../models/task_type_config.dart';
 import '../../models/university_task_model.dart';
 import 'university_state.dart';
 
@@ -35,31 +42,672 @@ class UniversityCubit extends Cubit<UniversityState> {
     return '$y-$m-$d';
   }
 
-  // Load courses from storage
+  // Load plans & courses from storage with safe backward-compatibility
   Future<void> loadUniversityData() async {
     emit(const UniversityLoading());
     try {
-      final courses = _storageService.loadCourses();
-      if (courses.isEmpty && !_storageService.isUniversityInitialized()) {
-        // Seed default representative demo courses so user can test immediately
-        final defaultCourses = _generateSampleCourses();
-        await _storageService.saveCourses(defaultCourses);
-        emit(UniversityLoaded(courses: defaultCourses));
-      } else {
-        emit(UniversityLoaded(courses: courses));
+      var plans = _storageService.loadPlans();
+      var activePlanId = _storageService.getActivePlanId();
+
+      if (plans.isEmpty) {
+        // Check for legacy courses to migrate safely
+        final legacyCourses = _storageService.loadCourses();
+        if (legacyCourses.isNotEmpty) {
+          final defaultPlan = StudyPlanModel(
+            id: 'plan_migrated_${DateTime.now().millisecondsSinceEpoch}',
+            name: 'الخطة الحالية (بيانات سابقة)',
+            academicYear: '2026-2027',
+            semester: 'الفصل الأول',
+            status: PlanStatus.active,
+            createdAt: DateTime.now(),
+            courses: legacyCourses,
+          );
+          plans = [defaultPlan];
+          activePlanId = defaultPlan.id;
+          await _storageService.savePlans(plans);
+          await _storageService.saveActivePlanId(activePlanId);
+        } else if (!_storageService.isUniversityInitialized()) {
+          // Seed default sample plan with demo courses for instant testing
+          final seedPlan = _generateSamplePlan();
+          plans = [seedPlan];
+          activePlanId = seedPlan.id;
+          await _storageService.savePlans(plans);
+          await _storageService.saveActivePlanId(activePlanId);
+        }
       }
+
+      if (activePlanId == null && plans.isNotEmpty) {
+        activePlanId = plans.first.id;
+      }
+
+      emit(UniversityLoaded(plans: plans, activePlanId: activePlanId));
     } catch (e) {
-      emit(UniversityError('حدث خطأ أثناء تحميل بيانات المقررات: $e'));
+      emit(UniversityError('حدث خطأ أثناء تحميل بيانات الخطط الدراسية: $e'));
     }
   }
 
-  // Helper to generate default lectures and tasks for a course
+  // --- STUDY PLANS CRUD ---
+
+  Future<void> addPlan({
+    required String name,
+    String? academicYear,
+    String? semester,
+  }) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return;
+
+    final newPlan = StudyPlanModel(
+      id: 'plan_${DateTime.now().millisecondsSinceEpoch}',
+      name: name,
+      academicYear: academicYear,
+      semester: semester,
+      status: PlanStatus.active,
+      createdAt: DateTime.now(),
+      courses: const [],
+    );
+
+    final updatedPlans = [...currentState.plans, newPlan];
+    // If it's the only plan or user requested, set as active
+    final newActiveId = currentState.plans.isEmpty ? newPlan.id : currentState.activePlanId;
+
+    await _storageService.savePlans(updatedPlans);
+    if (newActiveId != currentState.activePlanId && newActiveId != null) {
+      await _storageService.saveActivePlanId(newActiveId);
+    }
+
+    emit(currentState.copyWith(
+      plans: updatedPlans,
+      activePlanId: newActiveId,
+      message: 'تم إنشاء الخطة الدراسية بنجاح',
+    ));
+  }
+
+  Future<void> updatePlan({
+    required String planId,
+    required String name,
+    String? academicYear,
+    String? semester,
+  }) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return;
+
+    final updatedPlans = currentState.plans.map((p) {
+      if (p.id == planId) {
+        return p.copyWith(
+          name: name,
+          academicYear: academicYear,
+          semester: semester,
+        );
+      }
+      return p;
+    }).toList();
+
+    await _storageService.savePlans(updatedPlans);
+    emit(currentState.copyWith(plans: updatedPlans, message: 'تم تحديث بيانات الخطة'));
+  }
+
+  Future<void> setActivePlan(String planId) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return;
+
+    await _storageService.saveActivePlanId(planId);
+    emit(currentState.copyWith(
+      activePlanId: planId,
+      message: 'تم تفعيل الخطة الدراسية',
+    ));
+  }
+
+  Future<void> archivePlan(String planId) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return;
+
+    final updatedPlans = currentState.plans.map((p) {
+      if (p.id == planId) {
+        return p.copyWith(status: PlanStatus.archived);
+      }
+      return p;
+    }).toList();
+
+    // If active plan was archived, pick next active plan
+    String? newActiveId = currentState.activePlanId;
+    if (currentState.activePlanId == planId) {
+      final nextActive = updatedPlans.where((p) => p.isActive).firstOrNull;
+      newActiveId = nextActive?.id;
+      if (newActiveId != null) {
+        await _storageService.saveActivePlanId(newActiveId);
+      }
+    }
+
+    await _storageService.savePlans(updatedPlans);
+    emit(currentState.copyWith(
+      plans: updatedPlans,
+      activePlanId: newActiveId,
+      message: 'تمت أرشفة الخطة الدراسية',
+    ));
+  }
+
+  Future<void> restorePlan(String planId) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return;
+
+    final updatedPlans = currentState.plans.map((p) {
+      if (p.id == planId) {
+        return p.copyWith(status: PlanStatus.active);
+      }
+      return p;
+    }).toList();
+
+    await _storageService.savePlans(updatedPlans);
+    emit(currentState.copyWith(
+      plans: updatedPlans,
+      message: 'تمت استعادة الخطة بنجاح',
+    ));
+  }
+
+  Future<void> deletePlan(String planId) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return;
+
+    final updatedPlans = currentState.plans.where((p) => p.id != planId).toList();
+    String? newActiveId = currentState.activePlanId;
+    if (currentState.activePlanId == planId) {
+      final nextActive = updatedPlans.where((p) => p.isActive).firstOrNull;
+      newActiveId = nextActive?.id;
+      if (newActiveId != null) {
+        await _storageService.saveActivePlanId(newActiveId);
+      }
+    }
+
+    await _storageService.savePlans(updatedPlans);
+    emit(currentState.copyWith(
+      plans: updatedPlans,
+      activePlanId: newActiveId,
+      message: 'تم حذف الخطة ومقرراتها نهائياً',
+    ));
+  }
+
+  // --- COURSE CRUD (Tied to Active Plan) ---
+
+  Future<void> addCourse({
+    required String name,
+    required int creditHours,
+    required String instructorName,
+    String? practicalInstructorName,
+    required bool hasPractical,
+    required int theoryLecturesCount,
+    required int practicalLecturesCount,
+    List<TaskTypeConfig>? theoryTaskConfigs,
+    List<TaskTypeConfig>? practicalTaskConfigs,
+    bool autoTasks = true,
+  }) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return;
+    final activePlan = currentState.activePlan;
+    if (activePlan == null) return;
+
+    final courseId = 'course_${DateTime.now().millisecondsSinceEpoch}';
+
+    final effectiveTheoryConfigs = theoryTaskConfigs ?? defaultTaskConfigs();
+    final effectivePracticalConfigs = practicalTaskConfigs ?? defaultTaskConfigs();
+
+    final lectures = generateLecturesForCourse(
+      courseId: courseId,
+      courseName: name,
+      hasPractical: hasPractical,
+      theoryCount: theoryLecturesCount,
+      practicalCount: practicalLecturesCount,
+      theoryConfigs: effectiveTheoryConfigs,
+      practicalConfigs: effectivePracticalConfigs,
+      autoTasks: autoTasks,
+    );
+
+    final newCourse = CourseModel(
+      id: courseId,
+      planId: activePlan.id,
+      name: name,
+      creditHours: creditHours,
+      instructorName: instructorName,
+      practicalInstructorName: hasPractical ? practicalInstructorName : null,
+      hasPractical: hasPractical,
+      theoryLecturesCount: theoryLecturesCount,
+      practicalLecturesCount: hasPractical ? practicalLecturesCount : 0,
+      theoryTaskConfigs: effectiveTheoryConfigs,
+      practicalTaskConfigs: effectivePracticalConfigs,
+      assessments: const [],
+      lectures: lectures,
+    );
+
+    final updatedCourses = [...activePlan.courses, newCourse];
+    final updatedPlan = activePlan.copyWith(courses: updatedCourses);
+    final updatedPlans = currentState.plans.map((p) => p.id == activePlan.id ? updatedPlan : p).toList();
+
+    await _storageService.savePlans(updatedPlans);
+    emit(currentState.copyWith(plans: updatedPlans, message: 'تمت إضافة المقرر بنجاح'));
+  }
+
+  Future<void> updateCourse({
+    required String courseId,
+    required String name,
+    required int creditHours,
+    required String instructorName,
+    String? practicalInstructorName,
+    List<TaskTypeConfig>? theoryTaskConfigs,
+    List<TaskTypeConfig>? practicalTaskConfigs,
+  }) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return;
+
+    final updatedPlans = currentState.plans.map((plan) {
+      final courseIndex = plan.courses.indexWhere((c) => c.id == courseId);
+      if (courseIndex == -1) return plan;
+
+      final oldCourse = plan.courses[courseIndex];
+      final updatedCourse = oldCourse.copyWith(
+        name: name,
+        creditHours: creditHours,
+        instructorName: instructorName,
+        practicalInstructorName: oldCourse.hasPractical ? practicalInstructorName : null,
+        theoryTaskConfigs: theoryTaskConfigs ?? oldCourse.theoryTaskConfigs,
+        practicalTaskConfigs: practicalTaskConfigs ?? oldCourse.practicalTaskConfigs,
+      );
+
+      final newCourses = List<CourseModel>.from(plan.courses);
+      newCourses[courseIndex] = updatedCourse;
+      return plan.copyWith(courses: newCourses);
+    }).toList();
+
+    await _storageService.savePlans(updatedPlans);
+    emit(currentState.copyWith(plans: updatedPlans, message: 'تم تعديل المقرر بنجاح'));
+  }
+
+  Future<void> deleteCourse(String courseId) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return;
+
+    final updatedPlans = currentState.plans.map((plan) {
+      if (!plan.courses.any((c) => c.id == courseId)) return plan;
+      final newCourses = plan.courses.where((c) => c.id != courseId).toList();
+      return plan.copyWith(courses: newCourses);
+    }).toList();
+
+    await _storageService.savePlans(updatedPlans);
+    emit(currentState.copyWith(plans: updatedPlans, message: 'تم حذف المقرر'));
+  }
+
+  // --- LECTURE OPERATIONS ---
+
+  Future<void> recordAttendance(
+    String courseId,
+    String lectureId,
+    AttendanceStatus status, {
+    String? customDate,
+    String? cancellationReason,
+  }) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return;
+
+    final recordedDate = (status == AttendanceStatus.none)
+        ? null
+        : (customDate ?? getTodayString());
+
+    final updatedPlans = currentState.plans.map((plan) {
+      final courseIndex = plan.courses.indexWhere((c) => c.id == courseId);
+      if (courseIndex == -1) return plan;
+
+      final course = plan.courses[courseIndex];
+      final lectureIndex = course.lectures.indexWhere((l) => l.id == lectureId);
+      if (lectureIndex == -1) return plan;
+
+      final oldLecture = course.lectures[lectureIndex];
+      final updatedLecture = oldLecture.copyWith(
+        attendanceStatus: status,
+        lectureDate: recordedDate,
+        clearLectureDate: status == AttendanceStatus.none,
+        cancellationReason: status == AttendanceStatus.cancelled ? cancellationReason : null,
+        clearCancellationReason: status != AttendanceStatus.cancelled,
+      );
+
+      final newLectures = List<LectureModel>.from(course.lectures);
+      newLectures[lectureIndex] = updatedLecture;
+
+      final updatedCourse = course.copyWith(lectures: newLectures);
+      final newCourses = List<CourseModel>.from(plan.courses);
+      newCourses[courseIndex] = updatedCourse;
+
+      return plan.copyWith(courses: newCourses);
+    }).toList();
+
+    await _storageService.savePlans(updatedPlans);
+    emit(currentState.copyWith(plans: updatedPlans));
+  }
+
+  // Atomic "Complete All Tasks" for a lecture
+  Future<void> completeAllLectureTasks(String courseId, String lectureId) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return;
+
+    final updatedPlans = currentState.plans.map((plan) {
+      final courseIndex = plan.courses.indexWhere((c) => c.id == courseId);
+      if (courseIndex == -1) return plan;
+
+      final course = plan.courses[courseIndex];
+      final lectureIndex = course.lectures.indexWhere((l) => l.id == lectureId);
+      if (lectureIndex == -1) return plan;
+
+      final oldLecture = course.lectures[lectureIndex];
+      if (oldLecture.isCancelled) return plan; // Do not complete if cancelled
+
+      final updatedTasks = oldLecture.tasks.map((t) => t.copyWith(status: UniversityTaskStatus.completed)).toList();
+      final updatedLecture = oldLecture.copyWith(tasks: updatedTasks);
+
+      final newLectures = List<LectureModel>.from(course.lectures);
+      newLectures[lectureIndex] = updatedLecture;
+
+      final updatedCourse = course.copyWith(lectures: newLectures);
+      final newCourses = List<CourseModel>.from(plan.courses);
+      newCourses[courseIndex] = updatedCourse;
+
+      return plan.copyWith(courses: newCourses);
+    }).toList();
+
+    await _storageService.savePlans(updatedPlans);
+    emit(currentState.copyWith(plans: updatedPlans, message: 'تم إنجاز جميع مهام المحاضرة'));
+  }
+
+  Future<void> updateLectureNotes(String courseId, String lectureId, String notes) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return;
+
+    final updatedPlans = currentState.plans.map((plan) {
+      final courseIndex = plan.courses.indexWhere((c) => c.id == courseId);
+      if (courseIndex == -1) return plan;
+
+      final course = plan.courses[courseIndex];
+      final lectureIndex = course.lectures.indexWhere((l) => l.id == lectureId);
+      if (lectureIndex == -1) return plan;
+
+      final oldLecture = course.lectures[lectureIndex];
+      final updatedLecture = oldLecture.copyWith(notes: notes);
+
+      final newLectures = List<LectureModel>.from(course.lectures);
+      newLectures[lectureIndex] = updatedLecture;
+
+      final updatedCourse = course.copyWith(lectures: newLectures);
+      final newCourses = List<CourseModel>.from(plan.courses);
+      newCourses[courseIndex] = updatedCourse;
+
+      return plan.copyWith(courses: newCourses);
+    }).toList();
+
+    await _storageService.savePlans(updatedPlans);
+    emit(currentState.copyWith(plans: updatedPlans));
+  }
+
+  // --- LECTURE TASKS CRUD ---
+
+  Future<void> addLectureTask(
+    String courseId,
+    String lectureId,
+    String title,
+    UniversityTaskCategory category,
+  ) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return;
+
+    final taskId = 'task_${DateTime.now().millisecondsSinceEpoch}';
+    final newTask = UniversityTaskModel(
+      id: taskId,
+      lectureId: lectureId,
+      courseId: courseId,
+      title: title,
+      category: category,
+      status: UniversityTaskStatus.notStarted,
+      createdAt: DateTime.now(),
+    );
+
+    final updatedPlans = currentState.plans.map((plan) {
+      final courseIndex = plan.courses.indexWhere((c) => c.id == courseId);
+      if (courseIndex == -1) return plan;
+
+      final course = plan.courses[courseIndex];
+      final lectureIndex = course.lectures.indexWhere((l) => l.id == lectureId);
+      if (lectureIndex == -1) return plan;
+
+      final oldLecture = course.lectures[lectureIndex];
+      final updatedLecture = oldLecture.copyWith(tasks: [...oldLecture.tasks, newTask]);
+
+      final newLectures = List<LectureModel>.from(course.lectures);
+      newLectures[lectureIndex] = updatedLecture;
+
+      final updatedCourse = course.copyWith(lectures: newLectures);
+      final newCourses = List<CourseModel>.from(plan.courses);
+      newCourses[courseIndex] = updatedCourse;
+
+      return plan.copyWith(courses: newCourses);
+    }).toList();
+
+    await _storageService.savePlans(updatedPlans);
+    emit(currentState.copyWith(plans: updatedPlans));
+  }
+
+  Future<void> updateTaskStatus(
+    String courseId,
+    String lectureId,
+    String taskId,
+    UniversityTaskStatus status,
+  ) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return;
+
+    final updatedPlans = currentState.plans.map((plan) {
+      final courseIndex = plan.courses.indexWhere((c) => c.id == courseId);
+      if (courseIndex == -1) return plan;
+
+      final course = plan.courses[courseIndex];
+      final lectureIndex = course.lectures.indexWhere((l) => l.id == lectureId);
+      if (lectureIndex == -1) return plan;
+
+      final oldLecture = course.lectures[lectureIndex];
+      final updatedTasks = oldLecture.tasks.map((t) {
+        if (t.id == taskId) return t.copyWith(status: status);
+        return t;
+      }).toList();
+
+      final updatedLecture = oldLecture.copyWith(tasks: updatedTasks);
+      final newLectures = List<LectureModel>.from(course.lectures);
+      newLectures[lectureIndex] = updatedLecture;
+
+      final updatedCourse = course.copyWith(lectures: newLectures);
+      final newCourses = List<CourseModel>.from(plan.courses);
+      newCourses[courseIndex] = updatedCourse;
+
+      return plan.copyWith(courses: newCourses);
+    }).toList();
+
+    await _storageService.savePlans(updatedPlans);
+    emit(currentState.copyWith(plans: updatedPlans));
+  }
+
+  Future<void> updateTask(
+    String courseId,
+    String lectureId,
+    String taskId,
+    String title,
+    UniversityTaskCategory category,
+  ) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return;
+
+    final updatedPlans = currentState.plans.map((plan) {
+      final courseIndex = plan.courses.indexWhere((c) => c.id == courseId);
+      if (courseIndex == -1) return plan;
+
+      final course = plan.courses[courseIndex];
+      final lectureIndex = course.lectures.indexWhere((l) => l.id == lectureId);
+      if (lectureIndex == -1) return plan;
+
+      final oldLecture = course.lectures[lectureIndex];
+      final updatedTasks = oldLecture.tasks.map((t) {
+        if (t.id == taskId) return t.copyWith(title: title, category: category);
+        return t;
+      }).toList();
+
+      final updatedLecture = oldLecture.copyWith(tasks: updatedTasks);
+      final newLectures = List<LectureModel>.from(course.lectures);
+      newLectures[lectureIndex] = updatedLecture;
+
+      final updatedCourse = course.copyWith(lectures: newLectures);
+      final newCourses = List<CourseModel>.from(plan.courses);
+      newCourses[courseIndex] = updatedCourse;
+
+      return plan.copyWith(courses: newCourses);
+    }).toList();
+
+    await _storageService.savePlans(updatedPlans);
+    emit(currentState.copyWith(plans: updatedPlans));
+  }
+
+  Future<void> deleteTask(String courseId, String lectureId, String taskId) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return;
+
+    final updatedPlans = currentState.plans.map((plan) {
+      final courseIndex = plan.courses.indexWhere((c) => c.id == courseId);
+      if (courseIndex == -1) return plan;
+
+      final course = plan.courses[courseIndex];
+      final lectureIndex = course.lectures.indexWhere((l) => l.id == lectureId);
+      if (lectureIndex == -1) return plan;
+
+      final oldLecture = course.lectures[lectureIndex];
+      final updatedTasks = oldLecture.tasks.where((t) => t.id != taskId).toList();
+
+      final updatedLecture = oldLecture.copyWith(tasks: updatedTasks);
+      final newLectures = List<LectureModel>.from(course.lectures);
+      newLectures[lectureIndex] = updatedLecture;
+
+      final updatedCourse = course.copyWith(lectures: newLectures);
+      final newCourses = List<CourseModel>.from(plan.courses);
+      newCourses[courseIndex] = updatedCourse;
+
+      return plan.copyWith(courses: newCourses);
+    }).toList();
+
+    await _storageService.savePlans(updatedPlans);
+    emit(currentState.copyWith(plans: updatedPlans));
+  }
+
+  // --- ACADEMIC ASSESSMENTS & GRADING (Max Score <= 100 validation) ---
+
+  Future<bool> addAssessment(String courseId, AssessmentModel assessment) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return false;
+
+    final course = currentState.getCourse(courseId);
+    if (course == null) return false;
+
+    // Validation: Total allocated score must not exceed 100
+    if (course.totalAllocatedScore + assessment.maxScore > 100.0) {
+      emit(currentState.copyWith(message: 'مجموع درجات المقرر لا يمكن أن يتجاوز 100 درجة'));
+      return false;
+    }
+
+    final updatedPlans = currentState.plans.map((plan) {
+      final courseIndex = plan.courses.indexWhere((c) => c.id == courseId);
+      if (courseIndex == -1) return plan;
+
+      final c = plan.courses[courseIndex];
+      final updatedAssessments = [...c.assessments, assessment];
+      final updatedCourse = c.copyWith(assessments: updatedAssessments);
+
+      final newCourses = List<CourseModel>.from(plan.courses);
+      newCourses[courseIndex] = updatedCourse;
+      return plan.copyWith(courses: newCourses);
+    }).toList();
+
+    await _storageService.savePlans(updatedPlans);
+    emit(currentState.copyWith(plans: updatedPlans, message: 'تمت إضافة عنصر التقييم'));
+    return true;
+  }
+
+  Future<bool> updateAssessment(String courseId, AssessmentModel updatedAssessment) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return false;
+
+    final course = currentState.getCourse(courseId);
+    if (course == null) return false;
+
+    // Check sum without current element
+    final otherScores = course.assessments
+        .where((a) => a.id != updatedAssessment.id)
+        .fold(0.0, (sum, a) => sum + a.maxScore);
+
+    if (otherScores + updatedAssessment.maxScore > 100.0) {
+      emit(currentState.copyWith(message: 'مجموع درجات المقرر لا يمكن أن يتجاوز 100 درجة'));
+      return false;
+    }
+
+    final updatedPlans = currentState.plans.map((plan) {
+      final courseIndex = plan.courses.indexWhere((c) => c.id == courseId);
+      if (courseIndex == -1) return plan;
+
+      final c = plan.courses[courseIndex];
+      final updatedAssessments = c.assessments.map((a) {
+        if (a.id == updatedAssessment.id) return updatedAssessment;
+        return a;
+      }).toList();
+
+      final updatedCourse = c.copyWith(assessments: updatedAssessments);
+      final newCourses = List<CourseModel>.from(plan.courses);
+      newCourses[courseIndex] = updatedCourse;
+      return plan.copyWith(courses: newCourses);
+    }).toList();
+
+    await _storageService.savePlans(updatedPlans);
+    emit(currentState.copyWith(plans: updatedPlans, message: 'تم تحديث التقييم بنجاح'));
+    return true;
+  }
+
+  Future<void> deleteAssessment(String courseId, String assessmentId) async {
+    final currentState = state;
+    if (currentState is! UniversityLoaded) return;
+
+    final updatedPlans = currentState.plans.map((plan) {
+      final courseIndex = plan.courses.indexWhere((c) => c.id == courseId);
+      if (courseIndex == -1) return plan;
+
+      final c = plan.courses[courseIndex];
+      final updatedAssessments = c.assessments.where((a) => a.id != assessmentId).toList();
+
+      final updatedCourse = c.copyWith(assessments: updatedAssessments);
+      final newCourses = List<CourseModel>.from(plan.courses);
+      newCourses[courseIndex] = updatedCourse;
+      return plan.copyWith(courses: newCourses);
+    }).toList();
+
+    await _storageService.savePlans(updatedPlans);
+    emit(currentState.copyWith(plans: updatedPlans, message: 'تم حذف عنصر التقييم'));
+  }
+
+  // --- DEFAULTS & GENERATORS ---
+
+  static List<TaskTypeConfig> defaultTaskConfigs() {
+    return const [
+      TaskTypeConfig(key: 'attendance', name: 'الحضور والغياب', enabled: true),
+      TaskTypeConfig(key: 'study', name: 'المذاكرة', enabled: true),
+      TaskTypeConfig(key: 'homework', name: 'التكاليف والواجبات', enabled: true),
+      TaskTypeConfig(key: 'notes', name: 'الملاحظات', enabled: true),
+    ];
+  }
+
   static List<LectureModel> generateLecturesForCourse({
     required String courseId,
     required String courseName,
     required bool hasPractical,
     required int theoryCount,
     required int practicalCount,
+    required List<TaskTypeConfig> theoryConfigs,
+    required List<TaskTypeConfig> practicalConfigs,
     bool autoTasks = true,
   }) {
     final List<LectureModel> lectures = [];
@@ -67,7 +715,7 @@ class UniversityCubit extends Cubit<UniversityState> {
     // Theoretical lectures
     for (int i = 1; i <= theoryCount; i++) {
       final lectureId = '${courseId}_theory_$i';
-      final tasks = autoTasks ? _generateDefaultTheoryTasks(lectureId, courseId) : <UniversityTaskModel>[];
+      final tasks = autoTasks ? _generateTasksFromConfigs(lectureId, courseId, theoryConfigs, LectureSection.theoretical) : <UniversityTaskModel>[];
 
       lectures.add(
         LectureModel(
@@ -85,11 +733,11 @@ class UniversityCubit extends Cubit<UniversityState> {
       );
     }
 
-    // Practical lectures (if applicable)
+    // Practical lectures
     if (hasPractical) {
       for (int i = 1; i <= practicalCount; i++) {
         final lectureId = '${courseId}_practical_$i';
-        final tasks = autoTasks ? _generateDefaultPracticalTasks(lectureId, courseId) : <UniversityTaskModel>[];
+        final tasks = autoTasks ? _generateTasksFromConfigs(lectureId, courseId, practicalConfigs, LectureSection.practical) : <UniversityTaskModel>[];
 
         lectures.add(
           LectureModel(
@@ -111,421 +759,170 @@ class UniversityCubit extends Cubit<UniversityState> {
     return lectures;
   }
 
-  static List<UniversityTaskModel> _generateDefaultTheoryTasks(String lectureId, String courseId) {
+  static List<UniversityTaskModel> _generateTasksFromConfigs(
+    String lectureId,
+    String courseId,
+    List<TaskTypeConfig> configs,
+    LectureSection section,
+  ) {
     final now = DateTime.now();
-    return [
-      UniversityTaskModel(
-        id: '${lectureId}_task_study',
-        lectureId: lectureId,
-        courseId: courseId,
-        title: 'مذاكرة محتوى المحاضرة',
-        category: UniversityTaskCategory.study,
-        createdAt: now,
-      ),
-      UniversityTaskModel(
-        id: '${lectureId}_task_summary',
-        lectureId: lectureId,
-        courseId: courseId,
-        title: 'إعداد ملخص المحاضرة',
-        category: UniversityTaskCategory.summary,
-        createdAt: now,
-      ),
-      UniversityTaskModel(
-        id: '${lectureId}_task_review',
-        lectureId: lectureId,
-        courseId: courseId,
-        title: 'مراجعة المفاهيم والأسئلة',
-        category: UniversityTaskCategory.review,
-        createdAt: now,
-      ),
-      UniversityTaskModel(
-        id: '${lectureId}_task_hw',
-        lectureId: lectureId,
-        courseId: courseId,
-        title: 'حل واجبات المحاضرة',
-        category: UniversityTaskCategory.homework,
-        createdAt: now,
-      ),
-    ];
+    final List<UniversityTaskModel> tasks = [];
+
+    final studyCfg = configs.where((c) => c.key == 'study' && c.enabled).firstOrNull;
+    if (studyCfg != null) {
+      tasks.add(
+        UniversityTaskModel(
+          id: '${lectureId}_task_study',
+          lectureId: lectureId,
+          courseId: courseId,
+          title: section == LectureSection.theoretical
+              ? 'مذاكرة وتلخيص موضوع المحاضرة'
+              : 'مراجعة وتطبيق الأكواد المعملية',
+          category: section == LectureSection.theoretical
+              ? UniversityTaskCategory.study
+              : UniversityTaskCategory.practice,
+          status: UniversityTaskStatus.notStarted,
+          createdAt: now,
+          isRequired: true,
+        ),
+      );
+    }
+
+    final homeworkCfg = configs.where((c) => c.key == 'homework' && c.enabled).firstOrNull;
+    if (homeworkCfg != null) {
+      tasks.add(
+        UniversityTaskModel(
+          id: '${lectureId}_task_homework',
+          lectureId: lectureId,
+          courseId: courseId,
+          title: section == LectureSection.theoretical
+              ? 'حل تكليف وتمارين المحاضرة'
+              : 'تسليم التقرير العملي للمعمل',
+          category: UniversityTaskCategory.homework,
+          status: UniversityTaskStatus.notStarted,
+          createdAt: now,
+          isRequired: false,
+        ),
+      );
+    }
+
+    // Custom enabled tasks
+    for (final cfg in configs.where((c) => c.isCustom && c.enabled)) {
+      tasks.add(
+        UniversityTaskModel(
+          id: '${lectureId}_${cfg.key}',
+          lectureId: lectureId,
+          courseId: courseId,
+          title: cfg.name,
+          category: UniversityTaskCategory.custom,
+          status: UniversityTaskStatus.notStarted,
+          createdAt: now,
+          isRequired: false,
+        ),
+      );
+    }
+
+    return tasks;
   }
 
-  static List<UniversityTaskModel> _generateDefaultPracticalTasks(String lectureId, String courseId) {
-    final now = DateTime.now();
-    return [
-      UniversityTaskModel(
-        id: '${lectureId}_task_practice',
-        lectureId: lectureId,
-        courseId: courseId,
-        title: 'التطبيق العملي وتجربة الكود',
-        category: UniversityTaskCategory.practice,
-        createdAt: now,
-      ),
-      UniversityTaskModel(
-        id: '${lectureId}_task_study',
-        lectureId: lectureId,
-        courseId: courseId,
-        title: 'مذاكرة تعليمات وتجارب المختبر',
-        category: UniversityTaskCategory.study,
-        createdAt: now,
-      ),
-      UniversityTaskModel(
-        id: '${lectureId}_task_hw',
-        lectureId: lectureId,
-        courseId: courseId,
-        title: 'تسليم تقرير/واجب العملي',
-        category: UniversityTaskCategory.homework,
-        createdAt: now,
-      ),
-    ];
-  }
+  static StudyPlanModel _generateSamplePlan() {
+    final planId = 'plan_demo_2026';
+    final courseId1 = 'course_demo_dsa';
+    final courseId2 = 'course_demo_db';
 
-  // Create a new course
-  Future<void> addCourse({
-    required String name,
-    required int creditHours,
-    required String instructorName,
-    required bool hasPractical,
-    required int theoryLecturesCount,
-    required int practicalLecturesCount,
-    bool autoTasks = true,
-  }) async {
-    final currentState = state;
-    if (currentState is! UniversityLoaded) return;
-
-    final courseId = 'course_${DateTime.now().millisecondsSinceEpoch}';
-    final lectures = generateLecturesForCourse(
-      courseId: courseId,
-      courseName: name,
-      hasPractical: hasPractical,
-      theoryCount: theoryLecturesCount,
-      practicalCount: practicalLecturesCount,
-      autoTasks: autoTasks,
-    );
-
-    final newCourse = CourseModel(
-      id: courseId,
-      name: name,
-      creditHours: creditHours,
-      instructorName: instructorName,
-      hasPractical: hasPractical,
-      theoryLecturesCount: theoryLecturesCount,
-      practicalLecturesCount: practicalLecturesCount,
-      lectures: lectures,
-    );
-
-    final updated = List<CourseModel>.from(currentState.courses)..add(newCourse);
-    await _storageService.saveCourses(updated);
-    emit(currentState.copyWith(courses: updated, message: 'تمت إضافة مقرر $name بنجاح'));
-  }
-
-  // Update existing course metadata
-  Future<void> updateCourse({
-    required String courseId,
-    required String name,
-    required int creditHours,
-    required String instructorName,
-  }) async {
-    final currentState = state;
-    if (currentState is! UniversityLoaded) return;
-
-    final updated = currentState.courses.map((course) {
-      if (course.id == courseId) {
-        // Also update courseName on all lectures
-        final updatedLectures = course.lectures
-            .map((l) => l.copyWith(courseName: name))
-            .toList();
-        return course.copyWith(
-          name: name,
-          creditHours: creditHours,
-          instructorName: instructorName,
-          lectures: updatedLectures,
-        );
-      }
-      return course;
-    }).toList();
-
-    await _storageService.saveCourses(updated);
-    emit(currentState.copyWith(courses: updated, message: 'تم تحديث بيانات مقرر $name بنجاح'));
-  }
-
-  // Delete course
-  Future<void> deleteCourse(String courseId) async {
-    final currentState = state;
-    if (currentState is! UniversityLoaded) return;
-
-    final updated = currentState.courses.where((c) => c.id != courseId).toList();
-    await _storageService.saveCourses(updated);
-    emit(currentState.copyWith(courses: updated, message: 'تم حذف المقرر بنجاح'));
-  }
-
-  // Record Attendance for a lecture
-  // Rule 6: In the day student takes the lecture, they set حاضر or غائب.
-  // Rule 8: Automatically sets lectureDate = today
-  // If reset: clears lectureDate
-  Future<void> recordAttendance({
-    required String courseId,
-    required String lectureId,
-    required AttendanceStatus status,
-    String? customDate,
-  }) async {
-    final currentState = state;
-    if (currentState is! UniversityLoaded) return;
-
-    final targetDate = (status == AttendanceStatus.none)
-        ? null
-        : (customDate ?? getTodayString());
-
-    final updated = currentState.courses.map((course) {
-      if (course.id == courseId) {
-        final updatedLectures = course.lectures.map((lecture) {
-          if (lecture.id == lectureId) {
-            return lecture.copyWith(
-              attendanceStatus: status,
-              lectureDate: targetDate,
-              clearLectureDate: status == AttendanceStatus.none,
-            );
-          }
-          return lecture;
-        }).toList();
-        return course.copyWith(lectures: updatedLectures);
-      }
-      return course;
-    }).toList();
-
-    await _storageService.saveCourses(updated);
-    final statusText = status == AttendanceStatus.present
-        ? 'حاضر'
-        : (status == AttendanceStatus.absent ? 'غائب' : 'إلغاء التسجيل');
-    emit(currentState.copyWith(
-      courses: updated,
-      message: 'تم تسجيل حالة المحاضرة: $statusText في تاريخ $targetDate',
-    ));
-  }
-
-  // Update Lecture Notes
-  Future<void> updateLectureNotes({
-    required String courseId,
-    required String lectureId,
-    required String notes,
-  }) async {
-    final currentState = state;
-    if (currentState is! UniversityLoaded) return;
-
-    final updated = currentState.courses.map((course) {
-      if (course.id == courseId) {
-        final updatedLectures = course.lectures.map((lecture) {
-          if (lecture.id == lectureId) {
-            return lecture.copyWith(notes: notes);
-          }
-          return lecture;
-        }).toList();
-        return course.copyWith(lectures: updatedLectures);
-      }
-      return course;
-    }).toList();
-
-    await _storageService.saveCourses(updated);
-    emit(currentState.copyWith(courses: updated, message: 'تم حفظ ملاحظات المحاضرة'));
-  }
-
-  // Add a task to a lecture
-  Future<void> addLectureTask({
-    required String courseId,
-    required String lectureId,
-    required String title,
-    required UniversityTaskCategory category,
-  }) async {
-    final currentState = state;
-    if (currentState is! UniversityLoaded) return;
-
-    final newTask = UniversityTaskModel(
-      id: 'task_${DateTime.now().millisecondsSinceEpoch}',
-      lectureId: lectureId,
-      courseId: courseId,
-      title: title,
-      category: category,
-      status: UniversityTaskStatus.notStarted,
-      createdAt: DateTime.now(),
-    );
-
-    final updated = currentState.courses.map((course) {
-      if (course.id == courseId) {
-        final updatedLectures = course.lectures.map((lecture) {
-          if (lecture.id == lectureId) {
-            final tasks = List<UniversityTaskModel>.from(lecture.tasks)..add(newTask);
-            return lecture.copyWith(tasks: tasks);
-          }
-          return lecture;
-        }).toList();
-        return course.copyWith(lectures: updatedLectures);
-      }
-      return course;
-    }).toList();
-
-    await _storageService.saveCourses(updated);
-    emit(currentState.copyWith(courses: updated, message: 'تمت إضافة المهمة بنجاح'));
-  }
-
-  // Update task status (لم تبدأ / قيد التنفيذ / مكتملة)
-  Future<void> updateTaskStatus({
-    required String courseId,
-    required String lectureId,
-    required String taskId,
-    required UniversityTaskStatus status,
-  }) async {
-    final currentState = state;
-    if (currentState is! UniversityLoaded) return;
-
-    final updated = currentState.courses.map((course) {
-      if (course.id == courseId) {
-        final updatedLectures = course.lectures.map((lecture) {
-          if (lecture.id == lectureId) {
-            final tasks = lecture.tasks.map((task) {
-              if (task.id == taskId) {
-                return task.copyWith(status: status);
-              }
-              return task;
-            }).toList();
-            return lecture.copyWith(tasks: tasks);
-          }
-          return lecture;
-        }).toList();
-        return course.copyWith(lectures: updatedLectures);
-      }
-      return course;
-    }).toList();
-
-    await _storageService.saveCourses(updated);
-    emit(currentState.copyWith(courses: updated));
-  }
-
-  // Edit task title and category
-  Future<void> updateTask({
-    required String courseId,
-    required String lectureId,
-    required String taskId,
-    required String title,
-    required UniversityTaskCategory category,
-  }) async {
-    final currentState = state;
-    if (currentState is! UniversityLoaded) return;
-
-    final updated = currentState.courses.map((course) {
-      if (course.id == courseId) {
-        final updatedLectures = course.lectures.map((lecture) {
-          if (lecture.id == lectureId) {
-            final tasks = lecture.tasks.map((task) {
-              if (task.id == taskId) {
-                return task.copyWith(title: title, category: category);
-              }
-              return task;
-            }).toList();
-            return lecture.copyWith(tasks: tasks);
-          }
-          return lecture;
-        }).toList();
-        return course.copyWith(lectures: updatedLectures);
-      }
-      return course;
-    }).toList();
-
-    await _storageService.saveCourses(updated);
-    emit(currentState.copyWith(courses: updated, message: 'تم تحديث المهمة بنجاح'));
-  }
-
-  // Delete task from lecture
-  Future<void> deleteTask({
-    required String courseId,
-    required String lectureId,
-    required String taskId,
-  }) async {
-    final currentState = state;
-    if (currentState is! UniversityLoaded) return;
-
-    final updated = currentState.courses.map((course) {
-      if (course.id == courseId) {
-        final updatedLectures = course.lectures.map((lecture) {
-          if (lecture.id == lectureId) {
-            final tasks = lecture.tasks.where((t) => t.id != taskId).toList();
-            return lecture.copyWith(tasks: tasks);
-          }
-          return lecture;
-        }).toList();
-        return course.copyWith(lectures: updatedLectures);
-      }
-      return course;
-    }).toList();
-
-    await _storageService.saveCourses(updated);
-    emit(currentState.copyWith(courses: updated, message: 'تم حذف المهمة بنجاح'));
-  }
-
-  // Reset to initial sample state
-  Future<void> resetAllUniversityData() async {
-    emit(const UniversityLoading());
-    final sample = _generateSampleCourses();
-    await _storageService.saveCourses(sample);
-    emit(UniversityLoaded(courses: sample, message: 'تمت إعادة تعيين بيانات المقررات'));
-  }
-
-  // Sample data generation for instant testing on phone
-  static List<CourseModel> _generateSampleCourses() {
-    final today = getTodayString();
-
-    // 1. Data Structures (with Practical)
-    final cs101Id = 'course_cs101';
-    final cs101Lectures = generateLecturesForCourse(
-      courseId: cs101Id,
-      courseName: 'تراكيب البيانات والخوارزميات',
-      hasPractical: true,
-      theoryCount: 12,
-      practicalCount: 10,
-    );
-
-    // Mark lecture 1 as present with today's date
-    final cs101Updated = cs101Lectures.map((l) {
-      if (l.lectureNumber == 1 && l.section == LectureSection.theoretical) {
-        return l.copyWith(
-          attendanceStatus: AttendanceStatus.present,
-          lectureDate: today,
-          notes: 'شرح مقدمة في تعقيد الخوارزميات (Big O Notation) ومصفوفات الذاكرة.',
-        );
-      }
-      return l;
-    }).toList();
+    final defaultConfigs = defaultTaskConfigs();
 
     final course1 = CourseModel(
-      id: cs101Id,
+      id: courseId1,
+      planId: planId,
       name: 'تراكيب البيانات والخوارزميات',
       creditHours: 3,
-      instructorName: 'د. أحمد المهدي',
+      instructorName: 'د. أحمد السعيد',
+      practicalInstructorName: 'م. مروان خالد',
       hasPractical: true,
       theoryLecturesCount: 12,
       practicalLecturesCount: 10,
-      lectures: cs101Updated,
-    );
-
-    // 2. Database Systems (without Practical)
-    final db201Id = 'course_db201';
-    final db201Lectures = generateLecturesForCourse(
-      courseId: db201Id,
-      courseName: 'نظم قواعد البيانات',
-      hasPractical: false,
-      theoryCount: 12,
-      practicalCount: 0,
+      theoryTaskConfigs: defaultConfigs,
+      practicalTaskConfigs: defaultConfigs,
+      assessments: [
+        const AssessmentModel(
+          id: 'asm_dsa_mid',
+          name: 'اختبار نصفي نظري',
+          section: AssessmentSection.theoretical,
+          maxScore: 20,
+          isCompleted: false,
+        ),
+        const AssessmentModel(
+          id: 'asm_dsa_prac_mid',
+          name: 'اختبار نصفي عملي',
+          section: AssessmentSection.practical,
+          maxScore: 15,
+          isCompleted: false,
+        ),
+        const AssessmentModel(
+          id: 'asm_dsa_final',
+          name: 'الاختبار النهائي العام',
+          section: AssessmentSection.finalExam,
+          maxScore: 40,
+          isCompleted: false,
+        ),
+      ],
+      lectures: generateLecturesForCourse(
+        courseId: courseId1,
+        courseName: 'تراكيب البيانات والخوارزميات',
+        hasPractical: true,
+        theoryCount: 12,
+        practicalCount: 10,
+        theoryConfigs: defaultConfigs,
+        practicalConfigs: defaultConfigs,
+      ),
     );
 
     final course2 = CourseModel(
-      id: db201Id,
-      name: 'نظم قواعد البيانات',
+      id: courseId2,
+      planId: planId,
+      name: 'نظم إدارة قواعد البيانات',
       creditHours: 3,
-      instructorName: 'د. منى الشريف',
+      instructorName: 'د. سارة المنصور',
       hasPractical: false,
       theoryLecturesCount: 12,
       practicalLecturesCount: 0,
-      lectures: db201Lectures,
+      theoryTaskConfigs: defaultConfigs,
+      assessments: [
+        const AssessmentModel(
+          id: 'asm_db_mid',
+          name: 'اختبار فصلي',
+          section: AssessmentSection.theoretical,
+          maxScore: 30,
+          isCompleted: false,
+        ),
+        const AssessmentModel(
+          id: 'asm_db_final',
+          name: 'الاختبار النهائي',
+          section: AssessmentSection.finalExam,
+          maxScore: 50,
+          isCompleted: false,
+        ),
+      ],
+      lectures: generateLecturesForCourse(
+        courseId: courseId2,
+        courseName: 'نظم إدارة قواعد البيانات',
+        hasPractical: false,
+        theoryCount: 12,
+        practicalCount: 0,
+        theoryConfigs: defaultConfigs,
+        practicalConfigs: defaultConfigs,
+      ),
     );
 
-    return [course1, course2];
+    return StudyPlanModel(
+      id: planId,
+      name: 'الفصل الدراسي الأول 2026-2027',
+      academicYear: '2026-2027',
+      semester: 'الفصل الأول',
+      status: PlanStatus.active,
+      createdAt: DateTime.now(),
+      courses: [course1, course2],
+    );
   }
 }

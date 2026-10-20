@@ -1,0 +1,6 @@
+{
+  "summary":  "Comprehensive architectural blueprint for developing Task Manager V2 (تطبيق المهام الجامعية V2). Covers the 7 core evolutions: Study Plans architecture and entry point, Active Plan synchronized dashboard metrics, Course-level configurable academic task types with custom tasks, Lecture-level 'Complete All Tasks' atomic action, 'Cancelled' lecture status with reasons and attendance recalculation, Separation of Theoretical and Practical tracks, and Academic Assessments with strict 100-point grading validation. Details data models, Cubit state management, local storage persistence, and export packaging.",
+  "updatedAt":  "2026-10-20T22:01:03.977834255Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

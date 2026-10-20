@@ -1,10 +1,13 @@
 // ============================================================
 // UNIVERSITY STATE (V2)
 // State management classes for University Tasks
+// Supporting Study Plans, synchronized dashboard statistics,
+// and isolated courses/lectures per plan.
 // ============================================================
 
 import '../../models/course_model.dart';
 import '../../models/lecture_model.dart';
+import '../../models/study_plan_model.dart';
 import '../../models/university_task_model.dart';
 
 abstract class UniversityState {
@@ -20,84 +23,87 @@ class UniversityLoading extends UniversityState {
 }
 
 class UniversityLoaded extends UniversityState {
-  final List<CourseModel> courses;
+  final List<StudyPlanModel> plans;
+  final String? activePlanId;
   final String? message;
 
   const UniversityLoaded({
-    required this.courses,
+    required this.plans,
+    this.activePlanId,
     this.message,
   });
 
-  bool get isFirstTime => courses.isEmpty;
-
-  // Aggregate Statistics
-  int get totalCourses => courses.length;
-
-  int get totalLectures {
-    int total = 0;
-    for (final c in courses) {
-      total += c.totalLecturesCount;
+  // Get active plan
+  StudyPlanModel? get activePlan {
+    if (activePlanId != null) {
+      try {
+        return plans.firstWhere((p) => p.id == activePlanId && p.isActive);
+      } catch (_) {}
     }
-    return total;
-  }
-
-  int get recordedLectures {
-    int count = 0;
-    for (final c in courses) {
-      count += c.recordedLecturesCount;
-    }
-    return count;
-  }
-
-  int get totalPresent {
-    int count = 0;
-    for (final c in courses) {
-      count += c.presentCount;
-    }
-    return count;
-  }
-
-  int get totalAbsent {
-    int count = 0;
-    for (final c in courses) {
-      count += c.absentCount;
-    }
-    return count;
-  }
-
-  int get totalTasks {
-    int count = 0;
-    for (final c in courses) {
-      count += c.totalTasksCount;
-    }
-    return count;
-  }
-
-  int get completedTasks {
-    int count = 0;
-    for (final c in courses) {
-      count += c.completedTasksCount;
-    }
-    return count;
-  }
-
-  int get pendingTasks => totalTasks - completedTasks;
-
-  double get overallProgress {
-    if (totalLectures == 0) return 0.0;
-    return recordedLectures / totalLectures;
-  }
-
-  // Find a specific course
-  CourseModel? getCourse(String courseId) {
+    // Fallback to first active plan if any
     try {
-      return courses.firstWhere((c) => c.id == courseId);
+      return plans.firstWhere((p) => p.isActive);
     } catch (_) {
-      return null;
+      return plans.isNotEmpty ? plans.first : null;
     }
   }
 
-  // Find a specific lecture across all courses
+  List<StudyPlanModel> get activePlans =>
+      plans.where((p) => p.isActive).toList();
+
+  List<StudyPlanModel> get archivedPlans =>
+      plans.where((p) => p.isArchived).toList();
+
+  // Active plan's courses
+  List<CourseModel> get courses => activePlan?.courses ?? [];
+
+  bool get isFirstTime => plans.isEmpty;
+
+  // Aggregate Statistics (Tied strictly to the ACTIVE PLAN)
+  int get totalCourses => activePlan?.totalCourses ?? 0;
+
+  int get totalCreditHours => activePlan?.totalCreditHours ?? 0;
+
+  int get totalLectures => activePlan?.totalLectures ?? 0;
+
+  int get recordedLectures => activePlan?.recordedLectures ?? 0;
+
+  int get totalPresent => activePlan?.totalPresent ?? 0;
+
+  int get totalAbsent => activePlan?.totalAbsent ?? 0;
+
+  int get totalCancelled => activePlan?.totalCancelled ?? 0;
+
+  double get attendanceRate => activePlan?.attendanceRate ?? 0.0;
+
+  int get completedLecturesCount => activePlan?.completedLecturesCount ?? 0;
+
+  double get lectureCompletionRate => activePlan?.lectureCompletionRate ?? 0.0;
+
+  int get totalTasks => activePlan?.totalTasks ?? 0;
+
+  int get completedTasks => activePlan?.completedTasks ?? 0;
+
+  int get pendingTasks => activePlan?.pendingTasks ?? 0;
+
+  double get overallProgress => activePlan?.overallProgress ?? 0.0;
+
+  // Find a specific course in the active plan (or across all plans)
+  CourseModel? getCourse(String courseId) {
+    if (activePlan != null) {
+      try {
+        return activePlan!.courses.firstWhere((c) => c.id == courseId);
+      } catch (_) {}
+    }
+    for (final plan in plans) {
+      try {
+        return plan.courses.firstWhere((c) => c.id == courseId);
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  // Find a specific lecture across active plan courses
   LectureModel? getLecture(String courseId, String lectureId) {
     final course = getCourse(courseId);
     if (course == null) return null;
@@ -108,7 +114,7 @@ class UniversityLoaded extends UniversityState {
     }
   }
 
-  // Get all lectures that were recorded on a specific date (e.g. today: "YYYY-MM-DD")
+  // Get all lectures that were recorded on a specific date (for active plan)
   List<LectureModel> getLecturesRecordedOn(String dateString) {
     final List<LectureModel> list = [];
     for (final course in courses) {
@@ -130,12 +136,14 @@ class UniversityLoaded extends UniversityState {
     return tasks;
   }
 
-  // Get all lectures recorded within a specific list of dates (week)
+  // Get all lectures recorded within a specific set of dates (week)
   List<LectureModel> getLecturesRecordedInDates(Set<String> dateStrings) {
     final List<LectureModel> list = [];
     for (final course in courses) {
       for (final lecture in course.lectures) {
-        if (lecture.isRecorded && lecture.lectureDate != null && dateStrings.contains(lecture.lectureDate)) {
+        if (lecture.isRecorded &&
+            lecture.lectureDate != null &&
+            dateStrings.contains(lecture.lectureDate)) {
           list.add(lecture);
         }
       }
@@ -144,11 +152,13 @@ class UniversityLoaded extends UniversityState {
   }
 
   UniversityLoaded copyWith({
-    List<CourseModel>? courses,
+    List<StudyPlanModel>? plans,
+    String? activePlanId,
     String? message,
   }) {
     return UniversityLoaded(
-      courses: courses ?? this.courses,
+      plans: plans ?? this.plans,
+      activePlanId: activePlanId ?? this.activePlanId,
       message: message,
     );
   }

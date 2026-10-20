@@ -2,10 +2,11 @@
 // LECTURE DETAILS SCREEN (V2)
 // Displays comprehensive lecture details:
 // - Course Name, Section (نظري / عملي), Lecture Number
-// - Attendance registration (حاضر / غائب) with automatic today's date stamp
-// - Lecture Notes editor (الملاحظات مرتبطة بالمحاضرة وليست مهمة)
-// - Lecture Tasks CRUD (Create, Read, Update status, Delete)
-// - Categories: مذاكرة، تطبيق، تكاليف، ملخص، مراجعة، مهمة مخصصة
+// - Attendance registration: حاضر / غائب / ملغي (مع سبب الإلغاء)
+// - Button: «تم إنجاز جميع المهام» (يحوّل كافة مهام المحاضرة إلى مكتملة)
+// - Date modification dialog
+// - Lecture Notes editor
+// - Lecture Tasks CRUD with category styling
 // ============================================================
 
 import 'package:flutter/material.dart';
@@ -48,26 +49,123 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen> {
 
   void _saveNotes() {
     context.read<UniversityCubit>().updateLectureNotes(
-          courseId: widget.courseId,
-          lectureId: widget.lectureId,
-          notes: _notesController.text.trim(),
+          widget.courseId,
+          widget.lectureId,
+          _notesController.text.trim(),
         );
     setState(() {
       _isEditingNotes = false;
     });
   }
 
+  void _showCancelDialog(BuildContext context) {
+    String selectedReason = 'عطلة رسمية';
+    final customReasonController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.block_rounded, color: Colors.orange),
+              SizedBox(width: 8),
+              Text('تسجيل المحاضرة كملغاة', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'المحاضرات الملغاة يتم استبعادها تلقائياً من مقام حساب نسبة الحضور حتى لا تؤثر سلباً على معدلك.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: 14),
+              DropdownButtonFormField<String>(
+                value: selectedReason,
+                decoration: const InputDecoration(labelText: 'سبب الإلغاء', border: OutlineInputBorder()),
+                items: const [
+                  DropdownMenuItem(value: 'عطلة رسمية', child: Text('عطلة رسمية')),
+                  DropdownMenuItem(value: 'اعتذار الدكتور', child: Text('اعتذار الدكتور')),
+                  DropdownMenuItem(value: 'إلغاء من إدارة الكلية', child: Text('إلغاء من إدارة الكلية')),
+                  DropdownMenuItem(value: 'ظروف طارئة', child: Text('ظروف طارئة')),
+                  DropdownMenuItem(value: 'أخرى', child: Text('سبب مخصص (أخرى)...')),
+                ],
+                onChanged: (val) {
+                  if (val != null) setDialogState(() => selectedReason = val);
+                },
+              ),
+              if (selectedReason == 'أخرى') ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: customReasonController,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'اكتب سبب الإلغاء',
+                    hintText: 'مثال: تأجيل إلى موعد لاحق',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx),
+              child: const Text('تراجع'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange.shade700),
+              onPressed: () {
+                final finalReason = selectedReason == 'أخرى'
+                    ? (customReasonController.text.trim().isNotEmpty ? customReasonController.text.trim() : 'سبب غير محدد')
+                    : selectedReason;
+
+                context.read<UniversityCubit>().recordAttendance(
+                      widget.courseId,
+                      widget.lectureId,
+                      AttendanceStatus.cancelled,
+                      cancellationReason: finalReason,
+                    );
+                Navigator.pop(dialogCtx);
+              },
+              child: const Text('تأكيد الإلغاء', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showDateEditDialog(BuildContext context, LectureModel lecture) async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: now,
+      firstDate: DateTime(now.year - 1),
+      lastDate: DateTime(now.year + 2),
+    );
+
+    if (picked != null) {
+      final formatted = UniversityCubit.formatDate(picked);
+      context.read<UniversityCubit>().recordAttendance(
+            widget.courseId,
+            widget.lectureId,
+            lecture.attendanceStatus,
+            customDate: formatted,
+            cancellationReason: lecture.cancellationReason,
+          );
+    }
+  }
+
   void _showAddTaskDialog(BuildContext context) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (ctx) => _TaskFormSheet(
-        courseId: widget.courseId,
-        lectureId: widget.lectureId,
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => _TaskFormSheet(courseId: widget.courseId, lectureId: widget.lectureId),
     );
   }
 
@@ -75,9 +173,7 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => _TaskFormSheet(
         courseId: widget.courseId,
         lectureId: widget.lectureId,
@@ -105,9 +201,7 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen> {
       },
       builder: (context, state) {
         if (state is! UniversityLoaded) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
 
         final course = state.getCourse(widget.courseId);
@@ -120,10 +214,11 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen> {
           );
         }
 
-        // Keep notes controller in sync when not editing
-        if (!_isEditingNotes && _notesController.text != lecture.notes) {
+        if (!_isEditingNotes) {
           _notesController.text = lecture.notes;
         }
+
+        final isTheory = lecture.section == LectureSection.theoretical;
 
         return Scaffold(
           appBar: AppBar(
@@ -137,11 +232,11 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen> {
                 children: [
                   // Lecture Header Card
                   Container(
-                    padding: const EdgeInsets.all(18),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: colorScheme.surfaceVariant.withOpacity(0.4),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: colorScheme.outline.withOpacity(0.15)),
+                      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.4)),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -151,57 +246,49 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen> {
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                               decoration: BoxDecoration(
-                                color: colorScheme.primaryContainer,
+                                color: isTheory
+                                    ? Colors.blue.withValues(alpha: 0.12)
+                                    : Colors.teal.withValues(alpha: 0.12),
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: Text(
-                                lecture.section.displayName,
+                                isTheory ? 'محاضرة نظرية' : 'محاضرة عملية / مختبر',
                                 style: TextStyle(
-                                  color: colorScheme.primary,
+                                  fontSize: 11,
                                   fontWeight: FontWeight.bold,
-                                  fontSize: 12,
+                                  color: isTheory ? Colors.blue.shade700 : Colors.teal.shade700,
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 8),
+                            const Spacer(),
                             Text(
                               course.name,
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                             ),
                           ],
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'المحاضر: ${course.instructorName.isNotEmpty ? course.instructorName : "غير محدد"}',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
-                          ),
+                          'المحاضر: ${isTheory ? course.instructorName : (course.practicalInstructorName ?? course.instructorName)}',
+                          style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 20),
 
-                  // ============================================================
-                  // ATTENDANCE & ABSENCE SECTION
-                  // Rule 6: In the day student attends lecture, records حاضر or غائب.
-                  // Rule 7: Attendance is NOT a task.
-                  // Rule 8: Automatically sets lectureDate = today
-                  // ============================================================
+                  const SizedBox(height: 16),
+
+                  // Attendance Card (حاضر / غائب / ملغي)
                   _buildAttendanceCard(context, lecture),
-                  const SizedBox(height: 20),
 
-                  // ============================================================
-                  // NOTES SECTION (مرتبطة بالمحاضرة مباشرة)
-                  // ============================================================
+                  const SizedBox(height: 16),
+
+                  // Notes Card
                   _buildNotesCard(context, lecture),
+
                   const SizedBox(height: 20),
 
-                  // ============================================================
-                  // LECTURE TASKS CRUD SECTION
-                  // ============================================================
+                  // Tasks Section with «تم إنجاز جميع المهام» button
                   _buildTasksSection(context, lecture),
                 ],
               ),
@@ -220,9 +307,9 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen> {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceVariant.withOpacity(0.35),
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: colorScheme.outline.withOpacity(0.15)),
+        border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -239,103 +326,132 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen> {
           ),
           const SizedBox(height: 6),
           Text(
-            'حدد حالتك عند تلقي المحاضرة، وسيتم تسجيل تاريخ اليوم تلقائيًا وربط مهامها بالعرض اليومي.',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: colorScheme.onSurfaceVariant,
-            ),
+            'حدد حالتك (حاضر / غائب / ملغي). المحاضرات الملغاة تُستبعد تلقائياً من حساب نسبة الحضور.',
+            style: theme.textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
           ),
           const SizedBox(height: 14),
 
-          // Action Buttons: حاضر / غائب / إعادة الضبط
+          // 3 Buttons: حاضر / غائب / ملغي
           Row(
             children: [
-              // Present Button
+              // Present
               Expanded(
                 child: FilledButton.icon(
                   onPressed: () {
                     cubit.recordAttendance(
-                      courseId: widget.courseId,
-                      lectureId: widget.lectureId,
-                      status: AttendanceStatus.present,
+                      widget.courseId,
+                      widget.lectureId,
+                      AttendanceStatus.present,
                     );
                   },
-                  icon: const Icon(Icons.check_circle_rounded, size: 18),
-                  label: const Text('حاضر'),
+                  icon: const Icon(Icons.check_circle_rounded, size: 16),
+                  label: const Text('حاضر', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                   style: FilledButton.styleFrom(
-                    backgroundColor: lecture.isPresent ? const Color(0xFF059669) : Colors.grey.withOpacity(0.2),
+                    backgroundColor: lecture.isPresent ? const Color(0xFF059669) : Colors.grey.withValues(alpha: 0.15),
                     foregroundColor: lecture.isPresent ? Colors.white : colorScheme.onSurface,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 6),
 
-              // Absent Button
+              // Absent
               Expanded(
                 child: FilledButton.icon(
                   onPressed: () {
                     cubit.recordAttendance(
-                      courseId: widget.courseId,
-                      lectureId: widget.lectureId,
-                      status: AttendanceStatus.absent,
+                      widget.courseId,
+                      widget.lectureId,
+                      AttendanceStatus.absent,
                     );
                   },
-                  icon: const Icon(Icons.cancel_rounded, size: 18),
-                  label: const Text('غائب'),
+                  icon: const Icon(Icons.cancel_rounded, size: 16),
+                  label: const Text('غائب', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                   style: FilledButton.styleFrom(
-                    backgroundColor: lecture.isAbsent ? const Color(0xFFDC2626) : Colors.grey.withOpacity(0.2),
+                    backgroundColor: lecture.isAbsent ? const Color(0xFFDC2626) : Colors.grey.withValues(alpha: 0.15),
                     foregroundColor: lecture.isAbsent ? Colors.white : colorScheme.onSurface,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+
+              // Cancelled
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () => _showCancelDialog(context),
+                  icon: const Icon(Icons.block_rounded, size: 16),
+                  label: const Text('ملغي', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: lecture.isCancelled ? Colors.orange.shade700 : Colors.grey.withValues(alpha: 0.15),
+                    foregroundColor: lecture.isCancelled ? Colors.white : colorScheme.onSurface,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
                   ),
                 ),
               ),
 
               if (lecture.isRecorded) ...[
-                const SizedBox(width: 10),
+                const SizedBox(width: 4),
                 IconButton(
                   tooltip: 'إلغاء التسجيل',
                   onPressed: () {
                     cubit.recordAttendance(
-                      courseId: widget.courseId,
-                      lectureId: widget.lectureId,
-                      status: AttendanceStatus.none,
+                      widget.courseId,
+                      widget.lectureId,
+                      AttendanceStatus.none,
                     );
                   },
-                  icon: const Icon(Icons.refresh_rounded),
+                  icon: const Icon(Icons.refresh_rounded, size: 20),
                 ),
               ],
             ],
           ),
 
-          if (lecture.isRecorded && lecture.lectureDate != null) ...[
+          // Status & Date bar
+          if (lecture.isRecorded) ...[
             const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                color: lecture.isPresent
-                    ? const Color(0xFF059669).withOpacity(0.12)
-                    : const Color(0xFFDC2626).withOpacity(0.12),
+                color: lecture.isCancelled
+                    ? Colors.orange.withValues(alpha: 0.12)
+                    : (lecture.isPresent
+                        ? const Color(0xFF059669).withValues(alpha: 0.12)
+                        : const Color(0xFFDC2626).withValues(alpha: 0.12)),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Row(
                 children: [
                   Icon(
-                    Icons.event_available_rounded,
+                    lecture.isCancelled
+                        ? Icons.block_rounded
+                        : (lecture.isPresent ? Icons.check_circle_outline : Icons.cancel_outlined),
                     size: 16,
-                    color: lecture.isPresent ? const Color(0xFF059669) : const Color(0xFFDC2626),
+                    color: lecture.isCancelled
+                        ? Colors.orange.shade800
+                        : (lecture.isPresent ? const Color(0xFF059669) : const Color(0xFFDC2626)),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'تم التسجيل: ${lecture.attendanceStatus.displayName} بتاريخ ${lecture.lectureDate}',
+                      lecture.isCancelled
+                          ? 'محاضرة ملغاة ${lecture.cancellationReason != null ? "(${lecture.cancellationReason})" : ""} بتاريخ ${lecture.lectureDate ?? ""}'
+                          : 'تم التسجيل: ${lecture.isPresent ? "حاضر" : "غائب"} بتاريخ ${lecture.lectureDate ?? ""}',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
-                        color: lecture.isPresent ? const Color(0xFF059669) : const Color(0xFFDC2626),
+                        color: lecture.isCancelled
+                            ? Colors.orange.shade800
+                            : (lecture.isPresent ? const Color(0xFF059669) : const Color(0xFFDC2626)),
                       ),
                     ),
+                  ),
+                  TextButton(
+                    onPressed: () => _showDateEditDialog(context, lecture),
+                    child: const Text('تعديل التاريخ', style: TextStyle(fontSize: 11)),
                   ),
                 ],
               ),
@@ -353,9 +469,9 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen> {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceVariant.withOpacity(0.35),
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: colorScheme.outline.withOpacity(0.15)),
+        border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -367,10 +483,7 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen> {
                 children: [
                   Icon(Icons.notes_rounded, color: colorScheme.primary, size: 22),
                   const SizedBox(width: 8),
-                  Text(
-                    'ملاحظات المحاضرة',
-                    style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-                  ),
+                  Text('ملاحظات المحاضرة', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
                 ],
               ),
               if (!_isEditingNotes)
@@ -384,9 +497,7 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen> {
                   onPressed: _saveNotes,
                   icon: const Icon(Icons.check_rounded, size: 16),
                   label: const Text('حفظ'),
-                  style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                  ),
+                  style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6)),
                 ),
             ],
           ),
@@ -403,7 +514,9 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen> {
             )
           else
             Text(
-              lecture.notes.trim().isNotEmpty ? lecture.notes : 'لا توجد ملاحظات مسجلة لهذه المحاضرة بعد. اضغط تعديل للتدوين.',
+              lecture.notes.trim().isNotEmpty
+                  ? lecture.notes
+                  : 'لا توجد ملاحظات مسجلة لهذه المحاضرة بعد. اضغط تعديل للتدوين.',
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: lecture.notes.trim().isNotEmpty ? colorScheme.onSurface : colorScheme.onSurfaceVariant,
                 height: 1.5,
@@ -419,6 +532,8 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen> {
     final colorScheme = theme.colorScheme;
     final cubit = context.read<UniversityCubit>();
 
+    final hasUncompletedTasks = lecture.tasks.any((t) => !t.isCompleted);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -429,13 +544,31 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen> {
               'المهام الأكاديمية (${lecture.tasks.length})',
               style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
-            FilledButton.tonalIcon(
-              onPressed: () => _showAddTaskDialog(context),
-              icon: const Icon(Icons.add_rounded, size: 18),
-              label: const Text('إضافة مهمة'),
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              ),
+            Row(
+              children: [
+                // Button: «تم إنجاز جميع المهام»
+                if (!lecture.isCancelled && lecture.tasks.isNotEmpty && hasUncompletedTasks) ...[
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF059669),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    ),
+                    onPressed: () {
+                      cubit.completeAllLectureTasks(widget.courseId, widget.lectureId);
+                    },
+                    icon: const Icon(Icons.done_all_rounded, size: 16),
+                    label: const Text('تم إنجاز جميع المهام', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                FilledButton.tonalIcon(
+                  onPressed: () => _showAddTaskDialog(context),
+                  icon: const Icon(Icons.add_rounded, size: 18),
+                  label: const Text('إضافة مهمة'),
+                  style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6)),
+                ),
+              ],
             ),
           ],
         ),
@@ -445,203 +578,82 @@ class _LectureDetailsScreenState extends State<LectureDetailsScreen> {
           Container(
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
-              color: colorScheme.surfaceVariant.withOpacity(0.2),
+              color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(16),
             ),
             child: Center(
               child: Text(
-                'لا توجد مهام مضافة لهذه المحاضرة. يمكنك إضافة مهمة جديدة أعلاه.',
-                style: theme.textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+                'لا توجد مهام مضافة لهذه المحاضرة.',
+                style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 13),
               ),
             ),
           )
         else
-          ListView.separated(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: lecture.tasks.length,
-            separatorBuilder: (context, index) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final task = lecture.tasks[index];
-              return _buildTaskItem(context, task, cubit);
-            },
-          ),
-      ],
-    );
-  }
+          ...lecture.tasks.map((task) {
+            final catDef = taskCategoryDefinitions[task.category] ?? taskCategoryDefinitions[UniversityTaskCategory.custom]!;
+            final isCompleted = task.status == UniversityTaskStatus.completed;
 
-  Widget _buildTaskItem(BuildContext context, UniversityTaskModel task, UniversityCubit cubit) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-
-    Color categoryColor;
-    switch (task.category) {
-      case UniversityTaskCategory.study:
-        categoryColor = const Color(0xFF2563EB);
-        break;
-      case UniversityTaskCategory.practice:
-        categoryColor = const Color(0xFF059669);
-        break;
-      case UniversityTaskCategory.homework:
-        categoryColor = const Color(0xFFD97706);
-        break;
-      case UniversityTaskCategory.summary:
-        categoryColor = const Color(0xFF7C3AED);
-        break;
-      case UniversityTaskCategory.review:
-        categoryColor = const Color(0xFF0891B2);
-        break;
-      case UniversityTaskCategory.custom:
-        categoryColor = const Color(0xFF64748B);
-        break;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceVariant.withOpacity(0.35),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: task.isCompleted
-              ? const Color(0xFF059669).withOpacity(0.3)
-              : colorScheme.outline.withOpacity(0.12),
-        ),
-      ),
-      child: Row(
-        children: [
-          // Checkbox / Status cycler
-          InkWell(
-            onTap: () {
-              // Cycle: notStarted -> inProgress -> completed -> notStarted
-              final nextStatus = task.status == UniversityTaskStatus.notStarted
-                  ? UniversityTaskStatus.inProgress
-                  : (task.status == UniversityTaskStatus.inProgress
-                      ? UniversityTaskStatus.completed
-                      : UniversityTaskStatus.notStarted);
-              cubit.updateTaskStatus(
-                courseId: widget.courseId,
-                lectureId: widget.lectureId,
-                taskId: task.id,
-                status: nextStatus,
-              );
-            },
-            borderRadius: BorderRadius.circular(8),
-            child: Container(
-              padding: const EdgeInsets.all(6),
-              child: Icon(
-                task.status == UniversityTaskStatus.completed
-                    ? Icons.check_circle_rounded
-                    : (task.status == UniversityTaskStatus.inProgress
-                        ? Icons.timelapse_rounded
-                        : Icons.radio_button_unchecked_rounded),
-                color: task.status == UniversityTaskStatus.completed
-                    ? const Color(0xFF059669)
-                    : (task.status == UniversityTaskStatus.inProgress
-                        ? const Color(0xFFD97706)
-                        : colorScheme.onSurfaceVariant),
-                size: 24,
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-
-          // Title & Category
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
+            return Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: ListTile(
+                leading: IconButton(
+                  icon: Icon(
+                    isCompleted
+                        ? Icons.check_circle_rounded
+                        : (task.status == UniversityTaskStatus.inProgress
+                            ? Icons.timelapse_rounded
+                            : Icons.radio_button_unchecked_rounded),
+                    color: isCompleted ? Colors.green : (task.status == UniversityTaskStatus.inProgress ? Colors.orange : Colors.grey),
+                  ),
+                  onPressed: () {
+                    // Cycle status
+                    UniversityTaskStatus next;
+                    if (task.status == UniversityTaskStatus.notStarted) {
+                      next = UniversityTaskStatus.inProgress;
+                    } else if (task.status == UniversityTaskStatus.inProgress) {
+                      next = UniversityTaskStatus.completed;
+                    } else {
+                      next = UniversityTaskStatus.notStarted;
+                    }
+                    cubit.updateTaskStatus(widget.courseId, widget.lectureId, task.id, next);
+                  },
+                ),
+                title: Text(
                   task.title,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    decoration: task.isCompleted ? TextDecoration.lineThrough : null,
-                    color: task.isCompleted ? colorScheme.onSurfaceVariant : colorScheme.onSurface,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    decoration: isCompleted ? TextDecoration.lineThrough : null,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Wrap(
-                  spacing: 6,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: categoryColor.withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        task.category.displayName,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: categoryColor,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: colorScheme.surfaceVariant,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        task.status.displayName,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  ],
+                subtitle: Text(
+                  catDef.name,
+                  style: TextStyle(fontSize: 11, color: catDef.color),
                 ),
-              ],
-            ),
-          ),
-
-          // Edit / Delete Popup Menu
-          PopupMenuButton<String>(
-            icon: Icon(Icons.more_vert_rounded, size: 18, color: colorScheme.onSurfaceVariant),
-            onSelected: (val) {
-              if (val == 'edit') {
-                _showEditTaskDialog(context, task);
-              } else if (val == 'delete') {
-                cubit.deleteTask(
-                  courseId: widget.courseId,
-                  lectureId: widget.lectureId,
-                  taskId: task.id,
-                );
-              }
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'edit',
-                child: Row(
-                  children: [
-                    Icon(Icons.edit_rounded, size: 16),
-                    SizedBox(width: 8),
-                    Text('تعديل المهمة'),
+                trailing: PopupMenuButton<String>(
+                  onSelected: (val) {
+                    if (val == 'edit') {
+                      _showEditTaskDialog(context, task);
+                    } else if (val == 'delete') {
+                      cubit.deleteTask(widget.courseId, widget.lectureId, task.id);
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(value: 'edit', child: Text('تعديل')),
+                    const PopupMenuItem(value: 'delete', child: Text('حذف', style: TextStyle(color: Colors.red))),
                   ],
                 ),
               ),
-              const PopupMenuItem(
-                value: 'delete',
-                child: Row(
-                  children: [
-                    Icon(Icons.delete_outline_rounded, size: 16, color: Colors.red),
-                    SizedBox(width: 8),
-                    Text('حذف', style: TextStyle(color: Colors.red)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+            );
+          }),
+      ],
     );
   }
 }
 
 // ------------------------------------------------------------
-// MODAL SHEET: ADD / EDIT TASK FORM
+// MODAL SHEET: ADD / EDIT TASK
 // ------------------------------------------------------------
 
 class _TaskFormSheet extends StatefulWidget {
@@ -662,13 +674,13 @@ class _TaskFormSheet extends StatefulWidget {
 class _TaskFormSheetState extends State<_TaskFormSheet> {
   final _formKey = GlobalKey<FormState>();
   late TextEditingController _titleController;
-  UniversityTaskCategory _selectedCategory = UniversityTaskCategory.study;
+  late UniversityTaskCategory _category;
 
   @override
   void initState() {
     super.initState();
     _titleController = TextEditingController(text: widget.taskToEdit?.title ?? '');
-    _selectedCategory = widget.taskToEdit?.category ?? UniversityTaskCategory.study;
+    _category = widget.taskToEdit?.category ?? UniversityTaskCategory.study;
   }
 
   @override
@@ -679,32 +691,30 @@ class _TaskFormSheetState extends State<_TaskFormSheet> {
 
   void _submit() {
     if (!_formKey.currentState!.validate()) return;
-    final title = _titleController.text.trim();
     final cubit = context.read<UniversityCubit>();
+    final title = _titleController.text.trim();
 
     if (widget.taskToEdit != null) {
       cubit.updateTask(
-        courseId: widget.courseId,
-        lectureId: widget.lectureId,
-        taskId: widget.taskToEdit!.id,
-        title: title,
-        category: _selectedCategory,
+        widget.courseId,
+        widget.lectureId,
+        widget.taskToEdit!.id,
+        title,
+        _category,
       );
     } else {
       cubit.addLectureTask(
-        courseId: widget.courseId,
-        lectureId: widget.lectureId,
-        title: title,
-        category: _selectedCategory,
+        widget.courseId,
+        widget.lectureId,
+        title,
+        _category,
       );
     }
-
     Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final isEditing = widget.taskToEdit != null;
 
     return Padding(
@@ -712,66 +722,50 @@ class _TaskFormSheetState extends State<_TaskFormSheet> {
         left: 20,
         right: 20,
         top: 20,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
       ),
       child: Form(
         key: _formKey,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                isEditing ? 'تعديل المهمة الجامعية' : 'إضافة مهمة جديدة للمحاضرة',
-                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              isEditing ? 'تعديل المهمة الأكاديمية' : 'إضافة مهمة جديدة للمحاضرة',
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+            const SizedBox(height: 14),
+            TextFormField(
+              controller: _titleController,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'عنوان المهمة *',
+                hintText: 'مثال: حل مسائل الشابتر الثاني',
+                border: OutlineInputBorder(),
               ),
-              const SizedBox(height: 14),
-
-              // Title
-              TextFormField(
-                controller: _titleController,
-                decoration: const InputDecoration(
-                  labelText: 'عنوان المهمة *',
-                  hintText: 'مثال: حل مسائل الشابتر الثاني',
-                ),
-                validator: (val) {
-                  if (val == null || val.trim().isEmpty) {
-                    return 'يرجى إدخال عنوان المهمة';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 14),
-
-              // Category Picker
-              DropdownButtonFormField<UniversityTaskCategory>(
-                value: _selectedCategory,
-                decoration: const InputDecoration(
-                  labelText: 'تصنيف المهمة',
-                ),
-                items: UniversityTaskCategory.values.map((cat) {
-                  return DropdownMenuItem(
-                    value: cat,
-                    child: Text(cat.displayName),
-                  );
-                }).toList(),
-                onChanged: (val) {
-                  if (val != null) setState(() => _selectedCategory = val);
-                },
-              ),
-              const SizedBox(height: 20),
-
-              FilledButton.icon(
-                onPressed: _submit,
-                icon: Icon(isEditing ? Icons.save_rounded : Icons.add_rounded),
-                label: Text(isEditing ? 'حفظ التعديلات' : 'إضافة المهمة'),
-                style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-              ),
-            ],
-          ),
+              validator: (v) => (v == null || v.trim().isEmpty) ? 'يرجى إدخال عنوان المهمة' : null,
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<UniversityTaskCategory>(
+              value: _category,
+              decoration: const InputDecoration(labelText: 'تصنيف المهمة', border: OutlineInputBorder()),
+              items: UniversityTaskCategory.values.map((cat) {
+                final def = taskCategoryDefinitions[cat]!;
+                return DropdownMenuItem(
+                  value: cat,
+                  child: Text(def.name),
+                );
+              }).toList(),
+              onChanged: (val) {
+                if (val != null) setState(() => _category = val);
+              },
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: _submit,
+              child: Text(isEditing ? 'حفظ التعديلات' : 'إضافة المهمة'),
+            ),
+          ],
         ),
       ),
     );

@@ -19,6 +19,7 @@ import 'screens/settings/settings_screen.dart';
 import 'screens/splash/splash_screen.dart';
 import 'screens/tasks/tasks_screen.dart';
 import 'screens/university/courses_screen.dart';
+import 'screens/university/plans_screen.dart';
 import 'screens/university/today_tasks_screen.dart';
 import 'screens/university/university_dashboard_screen.dart';
 import 'screens/university/weekly_tasks_screen.dart';
@@ -105,6 +106,7 @@ class TaskManagerApp extends StatelessWidget {
               '/foundation': (context) => const FoundationScreen(),
               // University Routes (V2)
               '/university': (context) => const UniversityDashboardScreen(),
+              '/university/plans': (context) => const PlansScreen(),
               '/university/courses': (context) => const CoursesScreen(),
               '/university/today': (context) => const TodayTasksScreen(),
               '/university/week': (context) => const WeeklyTasksScreen(),

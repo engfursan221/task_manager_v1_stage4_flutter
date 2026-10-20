@@ -7,6 +7,7 @@ import '../../cubit/auth/auth_state.dart';
 import '../../cubit/theme/theme_cubit.dart';
 import '../../cubit/theme/theme_state.dart';
 import '../../widgets/app_bottom_nav_bar.dart';
+import '../university/plans_screen.dart';
 
 // ============================================================
 // REQUIREMENT: SETTINGS SCREEN
@@ -237,6 +238,22 @@ class SettingsScreen extends StatelessWidget {
                         trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
                         onTap: () {
                           Navigator.pushReplacementNamed(context, '/university');
+                        },
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: Colors.blue.withValues(alpha: 0.15),
+                          child: const Icon(Icons.layers_rounded, color: Colors.blue),
+                        ),
+                        title: const Text('إدارة الخطط الدراسية'),
+                        subtitle: const Text('إنشاء الخطط الأكاديمية والتبديل بين الفصول والأرشيف'),
+                        trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const PlansScreen()),
+                          );
                         },
                       ),
                     ],

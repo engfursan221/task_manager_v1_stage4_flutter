@@ -24,7 +24,7 @@ class ModeSelectionScreen extends StatelessWidget {
 
   void _chooseUniversityTasks(BuildContext context) {
     UniversityStorageService.instance.saveActiveMode('university');
-    Navigator.pushReplacementNamed(context, '/university');
+    Navigator.pushReplacementNamed(context, '/university/plans');
   }
 
   void _showLogoutDialog(BuildContext context) {
